@@ -36,7 +36,7 @@
 //    SI   - IO23
 //    SO   - IO19
 //    CS   - IO5
-//    Vcc  - 5V ! Der ESP32 hat 5V-feste Eingänge
+//    Vcc  - 5V ! ESP32 inputs are 5V tolerant
 //    GND  - GND
 //
 // http://henrysbench.capnfatz.com/henrys-bench/arduino-projects-tips-and-more/arduino-can-bus-module-1st-network-tutorial/
@@ -120,8 +120,20 @@ SerialFeedback Feedback;
 SerialFeedback NewFeedback;
 
 
-// ServoInputPin<36> servo1;
-ServoInputPin<35> servo2;
+//RC input signal setup
+// Steering Setup
+const int SteeringSignalPin = 32;  // MUST be interrupt-capable!
+const int SteeringPulseMin = 1277;  // microseconds (us)
+const int SteeringPulseMax = 1720;  // Ideal values for your servo can be found with the "Calibration" example
+
+ServoInputPin<SteeringSignalPin> steering(SteeringPulseMin, SteeringPulseMax);
+
+//Throttle Setup
+const int ThrottleSignalPin = 35;  // MUST be interrupt-capable!
+const int ThrottlePulseMin = 1196;  // microseconds (us)
+const int ThrottlePulseMax = 1807;  // Ideal values for your servo can be found with the "Calibration" example
+
+ServoInputPin<ThrottleSignalPin> throttle(ThrottlePulseMin, ThrottlePulseMax);
 
 
 //ble stuff
@@ -194,15 +206,6 @@ void can_send_enable_battery(){
     } else {
       Serial.println("Error Sending enablet battery CAN message...");
     }
-
-
-    // float angle = servo1.getAngle();  // get angle of servo 1 (0 - 180)
-    // Serial.print("Servo Angle:");
-    // Serial.println(angle);
-
-    float angle2 = servo2.getAngle();  // get angle of servo 2 (0 - 180)
-    Serial.print("Servo Angle:");
-    Serial.println(angle2);
   }
 
 void setup_can()
@@ -219,6 +222,17 @@ void setup_can()
   can_enable_battery_timer.setInterval(1000, can_send_enable_battery);
 }
 
+void setup_rc_servo_input()
+{
+  //attach interupts to servoinput lib as a workaround, as the internal interrupt setup doesn't work.
+  pinMode(SteeringSignalPin, INPUT_PULLUP);
+  pinMode(ThrottleSignalPin, INPUT_PULLUP);
+
+	//attach interupts to servoinput lib as a workaround, as the internal interrupt setup doesn't work.
+  attachInterrupt(digitalPinToInterrupt(SteeringSignalPin), steering.isr, CHANGE);
+	attachInterrupt(digitalPinToInterrupt(ThrottleSignalPin), throttle.isr, CHANGE);
+}
+
 void setup()
 {
   Serial.begin(SERIAL_BAUD);
@@ -232,6 +246,7 @@ void setup()
   #endif
 
   setup_can();
+  setup_rc_servo_input();
 }
 
 // ########################## SEND ##########################
@@ -359,12 +374,52 @@ void send_motor_test_command(){
 
   // Blink the LED
   digitalWrite(LED_BUILTIN, (timeNow%2000)<1000);
+}
 
+void send_rc_servo_input_values()
+{
+  if(ServoInput.available()){
+
+    Serial.print("RC - ");
+
+    int steerPermil = steering.map(-1000, 1000);  // remap to a percentage both forward and reverse
+    Serial.print("steerPermil: ");
+    Serial.print(steerPermil);
+    Serial.print("% ");
+
+    int steeringPulse = steering.getPulse();
+    Serial.print(" Pulseln: ");
+    Serial.print(steeringPulse);
+
+    Serial.print(" | ");  // separator
+
+    int throttlePermil = throttle.map(1000, -1000);  // remap to a percentage both forward and reverse
+    Serial.print("Throttle: ");
+    Serial.print(throttlePermil);
+    Serial.print("% ");
+
+    int throttlePulse = throttle.getPulse();
+    Serial.print(" Pulseln: ");
+    Serial.print(throttlePulse);
+
+    if (throttlePermil >= 0) {
+      Serial.print("(Forward)");
+    }
+    else {
+      Serial.print("(Reverse)");
+    }
+
+    Serial.println();
+
+    Send(steerPermil,throttlePermil);
+  }
 }
 
 void loop(void)
 {
   can_enable_battery_timer.run();
+
+  send_rc_servo_input_values();
 
   // Check for new received serial data from hoverboard and print in in clear text
   //Receive();
