@@ -380,9 +380,25 @@ void send_rc_servo_input_values()
 {
   if(ServoInput.available()){
 
+    /*full range values with default speed / torque settings in firmware
+      #define I_MOT_MAX       15              // [A] Maximum single motor current limit
+      #define I_DC_MAX        17              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
+      #define N_MOT_MAX       1000            // [rpm] Maximum motor speed limit
+
+      int steerPermil = steering.map(-1000, 1000);  // remap to a percentage both forward and reverse
+      int throttlePermil = throttle.map(1000, -1000);  // remap to a percentage both forward and reverse
+    */
+
+    /*
+    /*values for slower speed / torque settings in firmware
+      #define I_MOT_MAX       6              // [A] Maximum single motor current limit
+      #define I_DC_MAX        8              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
+      #define N_MOT_MAX       100 
+    */
+
     Serial.print("RC - ");
 
-    int steerPermil = steering.map(-1000, 1000);  // remap to a percentage both forward and reverse
+    int steerPermil = steering.map(-500, 500);  // remap to a percentage both forward and reverse
     Serial.print("steerPermil: ");
     Serial.print(steerPermil);
     Serial.print("% ");
@@ -393,7 +409,7 @@ void send_rc_servo_input_values()
 
     Serial.print(" | ");  // separator
 
-    int throttlePermil = throttle.map(1000, -1000);  // remap to a percentage both forward and reverse
+    int throttlePermil = throttle.map(200, -200);  // remap to a percentage both forward and reverse
     Serial.print("Throttle: ");
     Serial.print(throttlePermil);
     Serial.print("% ");
