@@ -5,8 +5,9 @@
   */
 
 #include <Arduino.h>
+#include <cstring>
 
-//#define USE_BLE
+#define USE_BLE
 
 //ble stuff
 //for some reason we cannot ifdef this because pio somehow automatically installs the ble dependencies and 
@@ -15,8 +16,8 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#ifdef USE_BLE
 
+#ifdef USE_BLE
 
 // #define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define SERVICE_UUID           "FFE0"
@@ -97,6 +98,11 @@ byte *p;                                // Pointer declaration for the new recei
 byte incomingByte;
 byte incomingBytePrev;
 
+uint32_t loop_counter = 0;
+
+//contains the value received via serial from the hoverboard
+std::string value_str;
+
 typedef struct{
    uint16_t start;
    int16_t  steer;
@@ -138,27 +144,80 @@ ServoInputPin<ThrottleSignalPin> throttle(ThrottlePulseMin, ThrottlePulseMax);
 
 //ble stuff
 #ifdef USE_BLE
+BLEServer *pServer = NULL;
 BLECharacteristic *pCharacteristic_tx;
 bool deviceConnected;
 
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
+      Serial.print("Ble device connected!");
+
     };
 
     void onDisconnect(BLEServer* pServer) {
       deviceConnected = false;
+      Serial.print("Ble device disconnected!");
+
+      Serial.println("Restarting BLE");
+      delay(500); // give the bluetooth stack the chance to get things ready
+      pServer->getAdvertising()->start(); // restart advertising
+      Serial.println("Start advertising");
     }
 };
+
+
+void printHexString(std::string str) {
+  for (unsigned int i = 0; i < str.length(); i++) {
+    char c = str[i];
+    if (c < 16) Serial.print("0");
+    Serial.print(c, HEX);
+  }
+  Serial.println();
+}
+
+void parseRxValue(const String& rxValue, SerialCommand& command) {
+    sscanf(rxValue.c_str(), "%hu %hd %hd %hu", &command.start, &command.steer, &command.speed, &command.checksum);
+}
 
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
       std::string rxValue = pCharacteristic->getValue();
-
+      size_t length = pCharacteristic->getLength();
+      Serial.print("Length:");
+      Serial.println(length);
+      //std::reverse(rxValue.begin(), rxValue.end());
       Serial.print("Received via ble:");
-      Serial.println(rxValue.c_str());
 
-      HoverSerial.write(rxValue.c_str());
+
+      printHexString(rxValue);
+      //HoverSerial.write(rxValue.c_str());
+      
+      SerialCommand command;
+      //parseRxValue(rxValue.c_str(), command);
+
+      std::memcpy(&command, rxValue.c_str(), sizeof(SerialCommand));
+
+      command.checksum = (uint16_t)(command.start ^ command.steer ^ command.speed);
+
+      // Write to Serial
+      HoverSerial.write((uint8_t *) &command, sizeof(SerialCommand));
+
+      Serial.print("start:");
+      Serial.println(command.start);
+      Serial.print("Speed:");
+      Serial.println(command.speed);
+      Serial.print("steer:");
+      Serial.println(command.steer);
+    }
+
+    void onStatus(BLECharacteristic* pCharacteristic, Status s, uint32_t code){
+      //Serial.print("onStatus");
+
+    }
+
+    void onNotify(BLECharacteristic* pCharacteristic){
+      //Serial.print("onNotify");
     }
 };
 
@@ -168,24 +227,25 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 void setup_btle(){
 
   BLEDevice::init("BT05");
-  BLEServer *pServer = BLEDevice::createServer();
+  pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
 
   BLEService *pService = pServer->createService(SERVICE_UUID);
 
   pCharacteristic_tx = pService->createCharacteristic(
                         CHARACTERISTIC_UUID_TX,
-                        BLECharacteristic::PROPERTY_NOTIFY
+                        BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_WRITE
                       );
 
   pCharacteristic_tx->addDescriptor(new BLE2902());
 
-  BLECharacteristic *pCharacteristic_rx = pService->createCharacteristic(
-                                          CHARACTERISTIC_UUID_RX,
-                                          BLECharacteristic::PROPERTY_WRITE
-                                        );
+  // BLECharacteristic *pCharacteristic_rx = pService->createCharacteristic(
+  //                                         CHARACTERISTIC_UUID_RX,
+  //                                         BLECharacteristic::PROPERTY_WRITE
+  //                                       );
 
-  pCharacteristic_rx->setCallbacks(new MyCallbacks());
+  // pCharacteristic_rx->setCallbacks(new MyCallbacks());
+  pCharacteristic_tx->setCallbacks(new MyCallbacks());
 
   pService->start();
 
@@ -245,7 +305,10 @@ void setup()
   setup_btle();
   #endif
 
+  #ifdef SEND_ENABLE_CAN
   setup_can();
+  #endif
+
   setup_rc_servo_input();
 }
 
@@ -398,7 +461,14 @@ void send_rc_servo_input_values()
 
     Serial.print("RC - ");
 
-    int steerPermil = steering.map(-500, 500);  // remap to a percentage both forward and reverse
+    int deadband_threshold = 30;
+
+    int steerPermil = steering.map(-1000, 1000);  // remap to a percentage both forward and reverse
+
+    if (steerPermil < deadband_threshold && steerPermil > -deadband_threshold){
+      steerPermil = 0;
+    }
+
     Serial.print("steerPermil: ");
     Serial.print(steerPermil);
     Serial.print("% ");
@@ -409,7 +479,12 @@ void send_rc_servo_input_values()
 
     Serial.print(" | ");  // separator
 
-    int throttlePermil = throttle.map(200, -200);  // remap to a percentage both forward and reverse
+    int throttlePermil = throttle.map(1000, -1000);  // remap to a percentage both forward and reverse
+
+    if (throttlePermil < deadband_threshold && throttlePermil > -deadband_threshold){
+      throttlePermil = 0;
+    }
+  
     Serial.print("Throttle: ");
     Serial.print(throttlePermil);
     Serial.print("% ");
@@ -433,6 +508,8 @@ void send_rc_servo_input_values()
 
 void loop(void)
 {
+  unsigned long loop_start_time = micros();
+
   can_enable_battery_timer.run();
 
   send_rc_servo_input_values();
@@ -441,7 +518,8 @@ void loop(void)
   //Receive();
 
 
-  /*the following two forwards enable the usage of the web gui
+  /*the following two forwards enable the usage of the web gui (via BLE if USE_BLE is set, via serial 0 if USE_BLE not set
+  )
   https://candas1.github.io/Hoverboard-Web-Serial-Control/
   Make sure to set the the log to "Binary" and connect to the com port of the Arduino!
   */
@@ -451,23 +529,35 @@ void loop(void)
     HoverSerial.write(Serial.read());
   }
 
-  //Forward hoverboard data to build in serial
+  //Forward hoverboard data to build in serial (This is the binary diag data like speed sent by the hoverboard firmware)
   if (HoverSerial.available()) {
     char value = HoverSerial.read();
-    Serial.write(value);
+    value_str = value;
 
-    // #ifdef USE_BLE
-    // std::string value_str{value};
-    //
-    // if (deviceConnected) { 
-    //   pCharacteristic_tx->setValue(value_str); 
-    //   pCharacteristic_tx->notify();
-    // }
-    //#endif
+    #ifdef USE_BLE
+
+    //Forward hoverboard data to ble
+    if (deviceConnected) { 
+        //to avoid the error: [BLECharacteristic.cpp:537] notify(): << esp_ble_gatts_send_ notify: rc=-1 Unknown ESP_ERR error
+        //the frequency of the hoveboard status messages (FEEDBACK_SERIAL_USART2) was reduced in the firmware to a delay of 100ms instead of 10ms see main.c:508
+
+          // pCharacteristic_tx->setValue(value_str); 
+          // pCharacteristic_tx->notify();
+    }
+    #endif
+
+    //user the normal esp32 serial to forward the hoverboard serial status messages
+    Serial.write(value);
+    #ifndef USE_BLE
+
+    #endif
 
   }
 
-  //send_motor_test_command();
+  loop_counter++;
+
+  // Serial.print("Loop us ");
+  // Serial.println(micros()-loop_start_time);
 }
 
 
