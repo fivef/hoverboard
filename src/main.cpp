@@ -6,8 +6,11 @@
 
 #include <Arduino.h>
 #include <cstring>
+#include <CircularBuffer.h>
 
 #define USE_BLE
+#define BLE_BUFFER_SIZE 1024
+#define BLE_SEND_INTERVAL 100 // ms
 
 //ble stuff
 //for some reason we cannot ifdef this because pio somehow automatically installs the ble dependencies and 
@@ -147,6 +150,8 @@ ServoInputPin<ThrottleSignalPin> throttle(ThrottlePulseMin, ThrottlePulseMax);
 BLEServer *pServer = NULL;
 BLECharacteristic *pCharacteristic_tx;
 bool deviceConnected;
+CircularBuffer<char, BLE_BUFFER_SIZE> bleBuffer;
+unsigned long lastBleSend = 0;
 
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
@@ -530,29 +535,25 @@ void loop(void)
   }
 
   //Forward hoverboard data to build in serial (This is the binary diag data like speed sent by the hoverboard firmware)
-  if (HoverSerial.available()) {
+  while (HoverSerial.available()) {
     char value = HoverSerial.read();
-    value_str = value;
-
+    
     #ifdef USE_BLE
-
-    //Forward hoverboard data to ble
-    if (deviceConnected) { 
-        //to avoid the error: [BLECharacteristic.cpp:537] notify(): << esp_ble_gatts_send_ notify: rc=-1 Unknown ESP_ERR error
-        //the frequency of the hoveboard status messages (FEEDBACK_SERIAL_USART2) was reduced in the firmware to a delay of 100ms instead of 10ms see main.c:508
-
-          // pCharacteristic_tx->setValue(value_str); 
-          // pCharacteristic_tx->notify();
+    if (deviceConnected && !bleBuffer.isFull()) {
+      bleBuffer.push(value);
     }
     #endif
 
-    //user the normal esp32 serial to forward the hoverboard serial status messages
+    //use the normal esp32 serial to forward the hoverboard serial status messages
     Serial.write(value);
-    #ifndef USE_BLE
-
-    #endif
-
   }
+
+  // Send buffered BLE data periodically
+  #ifdef USE_BLE
+  if (deviceConnected && (millis() - lastBleSend >= BLE_SEND_INTERVAL)) {
+    sendBufferedBluetoothData();
+  }
+  #endif
 
   loop_counter++;
 
@@ -561,5 +562,23 @@ void loop(void)
 }
 
 
+
+// Function to send buffered Bluetooth data
+void sendBufferedBluetoothData() {
+  if (bleBuffer.isEmpty()) {
+    return;
+  }
+
+  std::string data;
+  while (!bleBuffer.isEmpty() && data.length() < 20) {  // BLE packet size limit
+    data += bleBuffer.shift();
+  }
+
+  if (!data.empty()) {
+    pCharacteristic_tx->setValue(data);
+    pCharacteristic_tx->notify();
+    lastBleSend = millis();
+  }
+}
 
 // ########################## END ##########################
