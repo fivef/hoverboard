@@ -6,7 +6,7 @@
 
 #include <Arduino.h>
 #include <cstring>
-#include <CircularBuffer.h>
+#include <CircularBuffer.hpp>
 
 #define USE_BLE
 #define BLE_BUFFER_SIZE 1024
@@ -419,6 +419,24 @@ void can_receive(){
 }
 
 
+// Function to send buffered Bluetooth data
+void sendBufferedBluetoothData() {
+  if (bleBuffer.isEmpty()) {
+    return;
+  }
+
+  std::string data;
+  while (!bleBuffer.isEmpty() && data.length() < 20) {  // BLE packet size limit
+    data += bleBuffer.shift();
+  }
+
+  if (!data.empty()) {
+    pCharacteristic_tx->setValue(data);
+    pCharacteristic_tx->notify();
+    lastBleSend = millis();
+  }
+}
+
 // ########################## LOOP ##########################
 
 unsigned long iTimeSend = 0;
@@ -562,23 +580,5 @@ void loop(void)
 }
 
 
-
-// Function to send buffered Bluetooth data
-void sendBufferedBluetoothData() {
-  if (bleBuffer.isEmpty()) {
-    return;
-  }
-
-  std::string data;
-  while (!bleBuffer.isEmpty() && data.length() < 20) {  // BLE packet size limit
-    data += bleBuffer.shift();
-  }
-
-  if (!data.empty()) {
-    pCharacteristic_tx->setValue(data);
-    pCharacteristic_tx->notify();
-    lastBleSend = millis();
-  }
-}
 
 // ########################## END ##########################
