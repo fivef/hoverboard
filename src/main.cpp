@@ -189,31 +189,17 @@ class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
       std::string rxValue = pCharacteristic->getValue();
       size_t length = pCharacteristic->getLength();
-      Serial.print("Length:");
-      Serial.println(length);
-      //std::reverse(rxValue.begin(), rxValue.end());
-      Serial.print("Received via ble:");
 
 
       printHexString(rxValue);
       //HoverSerial.write(rxValue.c_str());
-      
-      SerialCommand command;
-      //parseRxValue(rxValue.c_str(), command);
 
-      std::memcpy(&command, rxValue.c_str(), sizeof(SerialCommand));
+      // Convert std::string to byte array
+      const char* byteArray = rxValue.c_str();
 
-      command.checksum = (uint16_t)(command.start ^ command.steer ^ command.speed);
+      // Forward the byte array via Serial
+      HoverSerial.write((uint8_t*)byteArray, length);
 
-      // Write to Serial
-      HoverSerial.write((uint8_t *) &command, sizeof(SerialCommand));
-
-      Serial.print("start:");
-      Serial.println(command.start);
-      Serial.print("Speed:");
-      Serial.println(command.speed);
-      Serial.print("steer:");
-      Serial.println(command.steer);
     }
 
     void onStatus(BLECharacteristic* pCharacteristic, Status s, uint32_t code){
